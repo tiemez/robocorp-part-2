@@ -5,18 +5,23 @@ import csv
 from RPA.PDF import PDF
 from pypdf import PdfReader, PdfWriter, Transformation
 from PIL import Image
+from RPA.Tables import Tables
+from RPA.Archive import Archive
+
 
 @task
-def place_robot_orders():
-    go_to_website_and_accept_cookies()
+def order_robots_from_RobotSpareBin():
+    open_robot_order_website()
     download_and_save_orders_csv()
     place_orders_from_csv()
+    create_zip_and_add_all_receipt()
+    
 
-def go_to_website_and_accept_cookies():
+def open_robot_order_website():
     browser.goto("https://robotsparebinindustries.com/#/robot-order")
-    accept_cookies()
+#    close_annoying_modal()
 
-def accept_cookies():
+def close_annoying_modal():
     page = browser.page()
     page.click("button:Text('OK')")
 
@@ -25,16 +30,16 @@ def download_and_save_orders_csv():
     http.download(url="https://robotsparebinindustries.com/orders.csv", overwrite=True)
 
 def place_orders_from_csv():
-    with open("orders.csv") as ordersCsv:
-        reader = csv.DictReader(ordersCsv)
-        for row in reader:
-            place_order(row)
-            make_pdf_of_receipt(row)
-            click_on_order_another_robot_button()
-            accept_cookies()
+    library = Tables()
+    orders = library.read_table_from_csv(path="orders.csv", header=True)
+    for row in orders:
+        fill_the_form(row)
+        store_receipt_as_pdf(row["Order number"])
+        click_on_order_another_robot_button()
+        archive_receipts()
     
-
-def place_order(row):
+def fill_the_form(row):
+    close_annoying_modal()
     page = browser.page()
     success = False;
     while(success is False): 
@@ -45,41 +50,45 @@ def place_order(row):
         page.click("#order")
         success = page.query_selector("#receipt") is not None
 
-def make_pdf_of_receipt(row):
+def store_receipt_as_pdf(orderNumber):
     page = browser.page()
     receipt = page.locator("#receipt").inner_html()
-    pdfFileName = "output/receipt" + row["Order number"] + ".pdf"
+    pdfFileName = "output/receipt" + orderNumber + ".pdf"
     pdf = PDF()
     pdf.html_to_pdf(receipt, pdfFileName)
-    add_robot_to_pdf(pdfFileName, make_screenshot_of_robot(row))
+    embed_screenshot_to_receipt(make_screenshot_of_robot(orderNumber), pdfFileName)
 
 def click_on_order_another_robot_button():
     page = browser.page()
     page.click("#order-another")
 
-def make_screenshot_of_robot(row):
+def make_screenshot_of_robot(orderNumber):
     page = browser.page()
-    filename = "output/robot-" + row["Order number"] + ".png"
-    bytes = browser.screenshot(page.locator("#robot-preview-image"))
-    write_png_file(filename, bytes)
-    return filename
+    previewImage = page.locator("#robot-preview-image")
+    bytes = browser.screenshot(previewImage)
+    fileName = "output/robot-" + orderNumber + ".png"
+    write_file(fileName, bytes)
+    return fileName;
 
-def add_robot_to_pdf(pdfFileName, imageFileName):
-    base_pdf = PdfReader(pdfFileName)
-    image = Image.open(imageFileName)
-    #image.resize(size=(190, 260))
-    image.save(imageFileName + ".pdf")
-    imagePdf = PdfReader(imageFileName + ".pdf")
+def write_file(filename, bytes):
+    with open(filename, "wb") as binary_file:
+        binary_file.write(bytes)
+
+def embed_screenshot_to_receipt(screenshot, pdf_file):
+
+    base_pdf = PdfReader(pdf_file)
+    image = Image.open(screenshot)
+    image.save(screenshot + ".pdf")
+    imagePdf = PdfReader(screenshot + ".pdf")
     imagePage = imagePdf.pages[0]
     
     base_page = base_pdf.pages[0]
-    base_page.merge_scaled_page(imagePage, 0.5)
+    base_page.merge_page(imagePage)
 
     newPdf = PdfWriter()
     newPdf.add_page(base_page)
-    newPdf.write(pdfFileName)
+    newPdf.write(pdf_file)
 
-
-def write_png_file(name, bytes):
-    with open(name, "wb") as binary_file:
-        binary_file.write(bytes)
+def archive_receipts():
+    lib = Archive()
+    lib.archive_folder_with_zip(folder="./output", archive_name="./output/receipts.zip", include="receipt*.pdf", exclude="/output/.*")
